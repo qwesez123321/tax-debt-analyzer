@@ -1,4 +1,4 @@
-package ru.intelinfo.inczilla.mvc;
+package ru.intelinfo.inczilla.mvc.io;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -17,7 +17,6 @@ public class ArchiveDownloader {
             log.error("Разрешены только .zip архивы. Получено: {}", archiveUrl);
             return null;
         }
-
 
         log.info("Скачиваем архив: {}", archiveUrl);
 
@@ -47,7 +46,7 @@ public class ArchiveDownloader {
         }
     }
 
-    public String getFileNameFromUrl(String url) {
+    private String getFileNameFromUrl(String url) {
         int pos = url.lastIndexOf('/');
         if (pos < 0 || pos == url.length() - 1) return null;
 

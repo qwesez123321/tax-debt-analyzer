@@ -1,7 +1,8 @@
-package ru.intelinfo.inczilla.mvc;
+package ru.intelinfo.inczilla.mvc.report;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import ru.intelinfo.inczilla.mvc.model.DebtStatistics;
 
 public class DebtStatisticsPrinter {
     private static final Logger log = LoggerFactory.getLogger(DebtStatisticsPrinter.class);

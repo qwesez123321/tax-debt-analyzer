@@ -1,15 +1,15 @@
-package ru.intelinfo.inczilla.mvc;
+package ru.intelinfo.inczilla.mvc.io;
 
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class OpenDataArchivePageClientTest {
+class ArchiveUrlExtractorTest {
 
-    private final OpenDataArchivePageClient client = new OpenDataArchivePageClient();
+    private final ArchiveUrlExtractor extractor = new ArchiveUrlExtractor();
 
     @Test
-    void findArchiveUrl_shouldFindZipLinkInHtml() {
+    void extractZipUrl_shouldFindZipLinkInHtml() {
         String html = """
                 <html>
                   <body>
@@ -18,21 +18,21 @@ class OpenDataArchivePageClientTest {
                 </html>
                 """;
 
-        String archiveUrl = client.findArchiveUrl(html);
+        String archiveUrl = extractor.extractZipUrl(html);
         assertEquals("https://data.nalog.ru/files/debt_2024-01-01.zip", archiveUrl);
     }
 
     @Test
-    void findArchiveUrl_shouldReturnNullIfNoArchiveLink() {
+    void extractZipUrl_shouldIgnoreNonZipArchives() {
         String html = """
                 <html>
                   <body>
-                    <a href="https://data.nalog.ru/files/readme.txt">README</a>
+                    <a href="https://data.nalog.ru/files/data.rar">RAR</a>
+                    <a href="https://data.nalog.ru/files/data.gz">GZ</a>
                   </body>
                 </html>
                 """;
 
-        String archiveUrl = client.findArchiveUrl(html);
-        assertNull(archiveUrl);
+        assertNull(extractor.extractZipUrl(html));
     }
 }

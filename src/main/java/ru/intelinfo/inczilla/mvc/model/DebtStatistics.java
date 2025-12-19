@@ -1,4 +1,4 @@
-package ru.intelinfo.inczilla.mvc;
+package ru.intelinfo.inczilla.mvc.model;
 
 import java.math.BigDecimal;
 import java.util.Map;

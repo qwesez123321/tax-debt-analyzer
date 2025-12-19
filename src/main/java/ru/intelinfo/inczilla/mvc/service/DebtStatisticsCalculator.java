@@ -1,4 +1,7 @@
-package ru.intelinfo.inczilla.mvc;
+package ru.intelinfo.inczilla.mvc.service;
+
+import ru.intelinfo.inczilla.mvc.model.CompanyDebtInfo;
+import ru.intelinfo.inczilla.mvc.model.DebtStatistics;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;

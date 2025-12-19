@@ -1,7 +1,12 @@
-package ru.intelinfo.inczilla.mvc;
+package ru.intelinfo.inczilla.mvc.service;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import ru.intelinfo.inczilla.mvc.io.ArchiveDownloader;
+import ru.intelinfo.inczilla.mvc.io.OpenDataArchivePageClient;
+import ru.intelinfo.inczilla.mvc.io.ZipXmlDebtParser;
+import ru.intelinfo.inczilla.mvc.model.CompanyDebtInfo;
+import ru.intelinfo.inczilla.mvc.report.DebtStatisticsPrinter;
 
 import java.util.Map;
 
@@ -31,7 +36,7 @@ public class TaxDebtAnalyzer {
                 return;
             }
 
-            Map<String, CompanyDebtInfo> companies = parser.processArchive(fileName);
+            Map<String, CompanyDebtInfo> companies = parser.parseArchive(fileName);
 
             var stats = calculator.calculate(companies);
             printer.print(stats);
