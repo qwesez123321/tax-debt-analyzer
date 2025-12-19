@@ -23,25 +23,36 @@ class ZipXmlDebtParserTest {
         String xml = """
                 <Файл ИдФайл="test.xml" ВерсФорм="4.01" ТипИнф="ОТКРДАННЫЕ6" КолДок="1">
                   <Документ ИдДок="1" ДатаДок="01.01.2025" ДатаСост="01.01.2025">
-                    <СведНП ИННЮЛ="1234567890" НаимОрг="ООО РОМАШКА"/>
+                    
                     <СведНедоим НаимНалог="Налог на прибыль" ОбщСумНедоим="100.50"/>
                     <СведНедоим НаимНалог="НДС" ОбщСумНедоим="200.25"/>
                     <СведНедоим НаимНалог="НДС" ОбщСумНедоим="10.00"/>
+                    <СведНП ИННЮЛ="1234567890" НаимОрг="ООО РОМАШКА"/>
+
                   </Документ>
                 </Файл>
                 """;
 
-        Path zip = createZipWithSingleXml(xml);
-        Map<String, CompanyDebtInfo> companies = parser.parseArchive(zip.toString());
+        Path zip = null;
+        try {
+            zip = createZipWithSingleXml(xml);
 
-        assertEquals(1, companies.size());
+            Map<String, CompanyDebtInfo> companies = parser.parseArchive(zip.toString());
 
-        CompanyDebtInfo info = companies.get("1234567890");
-        assertNotNull(info);
+            assertEquals(1, companies.size());
 
-        assertEquals(new BigDecimal("310.75"), info.totalDebt);
-        assertEquals(new BigDecimal("100.50"), info.debtByTaxType.get("Налог на прибыль"));
-        assertEquals(new BigDecimal("210.25"), info.debtByTaxType.get("НДС"));
+            CompanyDebtInfo info = companies.get("1234567890");
+            assertNotNull(info);
+
+            assertEquals(new BigDecimal("310.75"), info.totalDebt);
+            assertEquals(new BigDecimal("100.50"), info.debtByTaxType.get("Налог на прибыль"));
+            assertEquals(new BigDecimal("210.25"), info.debtByTaxType.get("НДС"));
+
+        } finally {
+            if (zip != null) {
+                Files.deleteIfExists(zip); // чистим временный файл
+            }
+        }
     }
 
     @Test
@@ -58,20 +69,28 @@ class ZipXmlDebtParserTest {
                 </Файл>
                 """;
 
-        Path zip = createZipWithSingleXml(xml);
-        Map<String, CompanyDebtInfo> companies = parser.parseArchive(zip.toString());
+        Path zip = null;
+        try {
+            zip = createZipWithSingleXml(xml);
 
-        CompanyDebtInfo c1 = companies.get("1111111111");
-        assertNotNull(c1);
-        assertEquals(new BigDecimal("1.00"), c1.totalDebt);
+            Map<String, CompanyDebtInfo> companies = parser.parseArchive(zip.toString());
 
-        // Вторая запись не должна попасть к первой компании
-        assertEquals(1, companies.size());
+            CompanyDebtInfo c1 = companies.get("1111111111");
+            assertNotNull(c1);
+            assertEquals(new BigDecimal("1.00"), c1.totalDebt);
+
+            // Вторая запись не должна попасть к первой компании
+            assertEquals(1, companies.size());
+
+        } finally {
+            if (zip != null) {
+                Files.deleteIfExists(zip); // чистим временный файл
+            }
+        }
     }
 
     private Path createZipWithSingleXml(String xml) throws Exception {
         Path zip = Files.createTempFile("taxdebt-", ".zip");
-        zip.toFile().deleteOnExit();
 
         try (ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(zip.toFile()))) {
             zos.putNextEntry(new ZipEntry("data.xml"));

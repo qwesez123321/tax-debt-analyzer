@@ -8,31 +8,31 @@ import javax.xml.stream.XMLInputFactory;
 import javax.xml.stream.XMLStreamConstants;
 import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamReader;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
-
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 
 public class ZipXmlDebtParser {
     private static final Logger log = LoggerFactory.getLogger(ZipXmlDebtParser.class);
     private static final XMLInputFactory XML_INPUT_FACTORY = XMLInputFactory.newInstance();
 
-    /**
-     * Public API (контракт): разобрать ZIP-архив с XML-файлами ФНС и вернуть агрегацию по компаниям.
-     */
     public Map<String, CompanyDebtInfo> parseArchive(String zipFilePath) throws IOException, XMLStreamException {
         Map<String, CompanyDebtInfo> result = new HashMap<>();
         log.info("Открываем архив: {}", zipFilePath);
+
         try (ZipInputStream zis = new ZipInputStream(new FileInputStream(zipFilePath))) {
             ZipEntry entry;
             while ((entry = zis.getNextEntry()) != null) {
+
                 if (!entry.isDirectory() && entry.getName().toLowerCase().endsWith(".xml")) {
                     log.info("Чтение XML: {}", entry.getName());
 
@@ -42,31 +42,30 @@ public class ZipXmlDebtParser {
                         parseSingleXml(xmlStream, result);
                     }
                 }
+
                 zis.closeEntry();
             }
         }
+
         return result;
     }
 
-    private byte[] readAllBytes(InputStream in) throws IOException {
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        byte[] buf = new byte[8192];
-        int len;
-        while ((len = in.read(buf)) != -1) {
-            out.write(buf, 0, len);
+    private static class PendingDebt {
+        final String tax;
+        final BigDecimal amount;
+
+        PendingDebt(String tax, BigDecimal amount) {
+            this.tax = tax;
+            this.amount = amount;
         }
-        return out.toByteArray();
     }
 
-    /**
-     * Парсинг одного XML по структуре XSD ФНС:
-     * Файл/Документ/(СведНП + СведНедоим*)
-     */
     private void parseSingleXml(InputStream xmlStream, Map<String, CompanyDebtInfo> map) throws XMLStreamException {
         XMLStreamReader r = XML_INPUT_FACTORY.createXMLStreamReader(xmlStream);
 
         boolean insideDocument = false;
         String currentInn = null;
+        List<PendingDebt> pendingDebts = new ArrayList<>();
 
         while (r.hasNext()) {
             int eventType = r.next();
@@ -77,67 +76,69 @@ public class ZipXmlDebtParser {
                 if ("Документ".equals(name)) {
                     insideDocument = true;
                     currentInn = null;
+                    pendingDebts.clear();
                     continue;
                 }
 
-                if (!insideDocument) {
+                if (!insideDocument) continue;
+
+                if ("СведНедоим".equals(name)) {
+                    String tax = attr(r, "НаимНалог");
+                    String sum = attr(r, "ОбщСумНедоим");
+
+                    if (tax == null || sum == null) continue;
+
+                    BigDecimal amount;
+                    try {
+                        amount = parseAmount(sum);
+                    } catch (NumberFormatException ex) {
+                        continue;
+                    }
+
+                    if (currentInn == null) {
+                        pendingDebts.add(new PendingDebt(tax, amount));
+                    } else {
+                        map.get(currentInn).addDebt(tax, amount);
+                    }
                     continue;
                 }
 
                 if ("СведНП".equals(name)) {
                     String inn = attr(r, "ИННЮЛ");
                     if (inn == null || inn.isBlank()) {
-                        log.warn("Элемент <СведНП> без атрибута ИННЮЛ, строка {}.", safeLine(r));
                         currentInn = null;
-                    } else {
-                        currentInn = inn;
-                        map.putIfAbsent(inn, new CompanyDebtInfo(inn));
-                    }
-                    continue;
-                }
-
-                if ("СведНедоим".equals(name)) {
-                    if (currentInn == null) {
-                        log.warn("Обнаружен <СведНедоим> без контекста ИНН (внутри Документ), строка {}.", safeLine(r));
+                        pendingDebts.clear();
                         continue;
                     }
 
-                    String tax = attr(r, "НаимНалог");
-                    String sum = attr(r, "ОбщСумНедоим");
+                    currentInn = inn;
+                    map.putIfAbsent(inn, new CompanyDebtInfo(inn));
 
-                    if (tax == null || sum == null) {
-                        log.warn("Элемент <СведНедоим> без НаимНалог/ОбщСумНедоим, строка {}.", safeLine(r));
-                        continue;
+                    if (!pendingDebts.isEmpty()) {
+                        CompanyDebtInfo info = map.get(inn);
+                        for (PendingDebt d : pendingDebts) {
+                            info.addDebt(d.tax, d.amount);
+                        }
+                        pendingDebts.clear();
                     }
-
-                    BigDecimal amount;
-                    try {
-                        amount = parseAmount(sum);
-                    } catch (NumberFormatException e) {
-                        log.warn("Не удалось распарсить сумму '{}', строка {}.", sum, safeLine(r));
-                        continue;
-                    }
-
-                    map.get(currentInn).addDebt(tax, amount);
                 }
 
             } else if (eventType == XMLStreamConstants.END_ELEMENT) {
-                String name = r.getLocalName();
-                if ("Документ".equals(name)) {
+                if ("Документ".equals(r.getLocalName())) {
                     insideDocument = false;
                     currentInn = null;
+                    pendingDebts.clear();
                 }
             }
         }
-
     }
 
-    private int safeLine(XMLStreamReader r) {
-        try {
-            if (r.getLocation() != null) return r.getLocation().getLineNumber();
-        } catch (Exception ignored) {
-        }
-        return -1;
+    private byte[] readAllBytes(InputStream in) throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        byte[] buf = new byte[8192];
+        int len;
+        while ((len = in.read(buf)) != -1) out.write(buf, 0, len);
+        return out.toByteArray();
     }
 
     private String attr(XMLStreamReader r, String name) {
