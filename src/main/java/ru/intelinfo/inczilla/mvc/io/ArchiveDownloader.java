@@ -3,16 +3,25 @@ package ru.intelinfo.inczilla.mvc.io;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.BufferedInputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 public class ArchiveDownloader {
     private static final Logger log = LoggerFactory.getLogger(ArchiveDownloader.class);
 
-    public String downloadArchive(String archiveUrl) throws IOException {
+    /**
+     * Скачивает архив по ссылке во временный файл (temp) и возвращает Path до него.
+     * Важно:
+     *  - скачиваем ТОЛЬКО .zip
+     *  - соединение гарантированно закрывается (disconnect) в finally
+     *  - файл создаётся во временной директории и должен быть удалён вызывающей стороной (обычно в finally)
+     */
+    public Path downloadArchiveToTemp(String archiveUrl) throws IOException {
         if (archiveUrl == null || !archiveUrl.toLowerCase().contains(".zip")) {
             log.error("Разрешены только .zip архивы. Получено: {}", archiveUrl);
             return null;
@@ -20,40 +29,37 @@ public class ArchiveDownloader {
 
         log.info("Скачиваем архив: {}", archiveUrl);
 
-        HttpURLConnection conn = (HttpURLConnection) new URL(archiveUrl).openConnection();
-        conn.setReadTimeout(30_000);
-        conn.setConnectTimeout(30_000);
+        HttpURLConnection conn = null;
+        try {
+            conn = (HttpURLConnection) new URL(archiveUrl).openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(30_000);
+            conn.setReadTimeout(30_000);
 
-        if (conn.getResponseCode() != 200) {
-            log.error("Ошибка скачивания: HTTP {}", conn.getResponseCode());
-            return null;
+            int code = conn.getResponseCode();
+            if (code != HttpURLConnection.HTTP_OK) {
+                log.error("Ошибка скачивания: HTTP {}", code);
+                return null;
+            }
+
+            Path tempZip = Files.createTempFile("taxdebt-", ".zip");
+
+            try (InputStream in = conn.getInputStream();
+                 OutputStream out = Files.newOutputStream(tempZip)) {
+                in.transferTo(out);
+            }
+
+            log.info("Архив сохранён во временный файл: {}", tempZip);
+            return tempZip;
+
+        } catch (IOException e) {
+            log.error("Ошибка при скачивании архива", e);
+            throw e;
+
+        } finally {
+            if (conn != null) {
+                conn.disconnect();
+            }
         }
-
-        String fileName = getFileNameFromUrl(archiveUrl);
-        if (fileName == null || !fileName.toLowerCase().endsWith(".zip")) {
-            fileName = "archive.zip";
-        }
-
-        try (BufferedInputStream in = new BufferedInputStream(conn.getInputStream());
-             FileOutputStream out = new FileOutputStream(fileName)) {
-
-            byte[] buf = new byte[8_192];
-            int len;
-            while ((len = in.read(buf)) != -1) out.write(buf, 0, len);
-
-            log.info("Архив сохранён: {}", fileName);
-            return fileName;
-        }
-    }
-
-    private String getFileNameFromUrl(String url) {
-        int pos = url.lastIndexOf('/');
-        if (pos < 0 || pos == url.length() - 1) return null;
-
-        String name = url.substring(pos + 1);
-        int q = name.indexOf('?');
-        if (q > 0) name = name.substring(0, q);
-
-        return name;
     }
 }

@@ -4,6 +4,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
@@ -17,24 +18,31 @@ public class OpenDataArchivePageClient {
     public String getArchiveUrl(String dataUrl) throws IOException {
         log.info("Получаем HTML-страницу: {}", dataUrl);
 
-        HttpURLConnection connection = (HttpURLConnection) new URL(dataUrl).openConnection();
-        connection.setConnectTimeout(10_000);
-        connection.setReadTimeout(10_000);
+        HttpURLConnection connection = null;
+        try {
+            connection = (HttpURLConnection) new URL(dataUrl).openConnection();
+            connection.setConnectTimeout(10_000);
+            connection.setReadTimeout(10_000);
 
-        int code = connection.getResponseCode();
-        log.info("Код ответа сервера: {}", code);
+            int code = connection.getResponseCode();
+            log.info("Код ответа сервера: {}", code);
 
-        if (code != HttpURLConnection.HTTP_OK) {
-            log.warn("Невозможно получить страницу: {}", code);
-            return null;
-        }
+            if (code != HttpURLConnection.HTTP_OK) {
+                log.warn("Невозможно получить страницу: {}", code);
+                return null;
+            }
 
-        try (Scanner sc = new Scanner(connection.getInputStream(), StandardCharsets.UTF_8)) {
-            StringBuilder sb = new StringBuilder();
-            while (sc.hasNextLine()) sb.append(sc.nextLine()).append('\n');
-            return extractor.extractZipUrl(sb.toString());
+            try (InputStream in = connection.getInputStream();
+                 Scanner sc = new Scanner(in, StandardCharsets.UTF_8)) {
+
+                StringBuilder sb = new StringBuilder();
+                while (sc.hasNextLine()) sb.append(sc.nextLine()).append('\n');
+                return extractor.extractZipUrl(sb.toString());
+            }
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
         }
     }
-
-
 }
