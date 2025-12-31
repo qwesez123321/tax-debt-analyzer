@@ -1,0 +1,19 @@
+# IntelliJ IDEA
+.idea/
+*.iml
+
+# Maven
+target/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Archives
+*.zip
+
+# H2 database files
+data/
+*.mv.db
+*.trace.db
+
