@@ -7,41 +7,80 @@ import ru.intelinfo.inczilla.mvc.io.OpenDataArchivePageClient;
 import ru.intelinfo.inczilla.mvc.io.ZipXmlDebtParser;
 import ru.intelinfo.inczilla.mvc.model.CompanyDebtInfo;
 import ru.intelinfo.inczilla.mvc.report.DebtStatisticsPrinter;
+import ru.intelinfo.inczilla.mvc.util.ArchiveDatasetDateExtractor;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.LocalDate;
 import java.util.Map;
 
 public class TaxDebtAnalyzer {
     private static final Logger log = LoggerFactory.getLogger(TaxDebtAnalyzer.class);
 
-    private final OpenDataArchivePageClient pageClient = new OpenDataArchivePageClient();
-    private final ArchiveDownloader downloader = new ArchiveDownloader();
-    private final ZipXmlDebtParser parser = new ZipXmlDebtParser();
-    private final DebtStatisticsCalculator calculator = new DebtStatisticsCalculator();
-    private final DebtStatisticsPrinter printer = new DebtStatisticsPrinter();
+    private final OpenDataArchivePageClient pageClient;
+    private final ArchiveDownloader downloader;
+    private final ZipXmlDebtParser parser;
+    private final DebtStatisticsCalculator calculator;
+    private final DebtStatisticsPrinter printer;
+    private final DebtStorageService storage;
+
+    public TaxDebtAnalyzer(OpenDataArchivePageClient pageClient,
+                           ArchiveDownloader downloader,
+                           ZipXmlDebtParser parser,
+                           DebtStatisticsCalculator calculator,
+                           DebtStatisticsPrinter printer,
+                           DebtStorageService storage) {
+        this.pageClient = pageClient;
+        this.downloader = downloader;
+        this.parser = parser;
+        this.calculator = calculator;
+        this.printer = printer;
+        this.storage = storage;
+    }
 
     public void run(String dataUrl) {
         Path zipPath = null;
 
         try {
-            String archiveUrl = pageClient.getArchiveUrl(dataUrl);
+            storage.ensureSchema();
 
+            String archiveUrl = pageClient.getArchiveUrl(dataUrl);
             if (archiveUrl == null) {
                 log.error("Не удалось найти ссылку на архив на странице {}", dataUrl);
                 return;
             }
 
-            log.info("Найден архив: {}", archiveUrl);
-
-            zipPath = downloader.downloadArchiveToTemp(archiveUrl);
-            if (zipPath == null) {
-                log.error("Ошибка при скачивании архива");
+            LocalDate siteDate = ArchiveDatasetDateExtractor.extractFromArchiveUrl(archiveUrl);
+            if (siteDate == null) {
+                log.error("Не удалось определить дату набора данных из ссылки: {}", archiveUrl);
                 return;
             }
 
-            Map<String, CompanyDebtInfo> companies = parser.parseArchive(zipPath.toString());
+            LocalDate dbDate = storage.getDbDatasetDate();
+            log.info("Дата набора на сайте: {}", siteDate);
+            log.info("Дата набора в БД: {}", dbDate);
+
+            Map<String, CompanyDebtInfo> companies;
+
+            boolean needUpdate = (dbDate == null) || dbDate.isBefore(siteDate);
+
+            if (needUpdate) {
+                log.info("Данные в БД отсутствуют или устарели → обновляем");
+
+                zipPath = downloader.downloadArchiveToTemp(archiveUrl);
+                if (zipPath == null) {
+                    log.error("Ошибка при скачивании архива");
+                    return;
+                }
+
+                companies = parser.parseArchive(zipPath.toString());
+                storage.replaceAll(companies, siteDate);
+
+            } else {
+                log.info("Данные в БД актуальны → читаем из БД");
+                companies = storage.loadAll();
+            }
 
             var stats = calculator.calculate(companies);
             printer.print(stats);

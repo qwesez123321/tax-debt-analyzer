@@ -1,13 +1,6 @@
-# IntelliJ IDEA
+data/
+*.mv.db
+*.trace.db
+target/
 .idea/
 *.iml
-
-# Maven
-target/
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Archives
-*.zip
