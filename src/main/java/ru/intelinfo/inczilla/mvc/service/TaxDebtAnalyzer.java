@@ -9,8 +9,6 @@ import ru.intelinfo.inczilla.mvc.model.CompanyDebtInfo;
 import ru.intelinfo.inczilla.mvc.report.DebtStatisticsPrinter;
 import ru.intelinfo.inczilla.mvc.util.ArchiveDatasetDateExtractor;
 
-import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDate;
 import java.util.Map;
@@ -21,30 +19,27 @@ public class TaxDebtAnalyzer {
     private final OpenDataArchivePageClient pageClient;
     private final ArchiveDownloader downloader;
     private final ZipXmlDebtParser parser;
+
+    private final DatasetUpdateService updateService;
     private final DebtStatisticsCalculator calculator;
     private final DebtStatisticsPrinter printer;
-    private final DebtStorageService storage;
 
     public TaxDebtAnalyzer(OpenDataArchivePageClient pageClient,
                            ArchiveDownloader downloader,
                            ZipXmlDebtParser parser,
+                           DatasetUpdateService updateService,
                            DebtStatisticsCalculator calculator,
-                           DebtStatisticsPrinter printer,
-                           DebtStorageService storage) {
+                           DebtStatisticsPrinter printer) {
         this.pageClient = pageClient;
         this.downloader = downloader;
         this.parser = parser;
+        this.updateService = updateService;
         this.calculator = calculator;
         this.printer = printer;
-        this.storage = storage;
     }
 
     public void run(String dataUrl) {
-        Path zipPath = null;
-
         try {
-            storage.ensureSchema();
-
             String archiveUrl = pageClient.getArchiveUrl(dataUrl);
             if (archiveUrl == null) {
                 log.error("Не удалось найти ссылку на архив на странице {}", dataUrl);
@@ -57,46 +52,30 @@ public class TaxDebtAnalyzer {
                 return;
             }
 
-            LocalDate dbDate = storage.getDbDatasetDate();
-            log.info("Дата набора на сайте: {}", siteDate);
-            log.info("Дата набора в БД: {}", dbDate);
-
-            Map<String, CompanyDebtInfo> companies;
-
-            boolean needUpdate = (dbDate == null) || dbDate.isBefore(siteDate);
-
-            if (needUpdate) {
-                log.info("Данные в БД отсутствуют или устарели → обновляем");
-
-                zipPath = downloader.downloadArchiveToTemp(archiveUrl);
+            updateService.updateIfRequired(siteDate, () -> {
+                Path zipPath = downloader.downloadArchiveToTemp(archiveUrl);
                 if (zipPath == null) {
-                    log.error("Ошибка при скачивании архива");
-                    return;
+                    throw new IllegalStateException("Ошибка при скачивании архива");
                 }
+                Map<String, CompanyDebtInfo> companies = parser.parseArchive(zipPath.toString());
+                return new ParsedArchive(zipPath, companies);
+            });
 
-                companies = parser.parseArchive(zipPath.toString());
-                storage.replaceAll(companies, siteDate);
-
-            } else {
-                log.info("Данные в БД актуальны → читаем из БД");
-                companies = storage.loadAll();
-            }
-
-            var stats = calculator.calculate(companies);
+            var stats = calculator.calculate();
             printer.print(stats);
 
         } catch (Exception e) {
             log.error("Ошибка выполнения программы", e);
+        }
+    }
 
-        } finally {
-            if (zipPath != null) {
-                try {
-                    Files.deleteIfExists(zipPath);
-                    log.info("Временный архив удалён: {}", zipPath);
-                } catch (IOException ex) {
-                    log.warn("Не удалось удалить временный архив: {}", zipPath, ex);
-                }
-            }
+    public static final class ParsedArchive {
+        public final Path zipPath;
+        public final Map<String, CompanyDebtInfo> companies;
+
+        public ParsedArchive(Path zipPath, Map<String, CompanyDebtInfo> companies) {
+            this.zipPath = zipPath;
+            this.companies = companies;
         }
     }
 }

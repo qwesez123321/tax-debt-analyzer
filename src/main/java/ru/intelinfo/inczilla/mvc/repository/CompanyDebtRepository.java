@@ -13,13 +13,13 @@ public class CompanyDebtRepository {
         try (Statement st = conn.createStatement()) {
             st.executeUpdate("""
                 create table if not exists company (
-                  inn varchar(10) primary key
+                  inn varchar(12) primary key
                 )
             """);
 
             st.executeUpdate("""
                 create table if not exists company_debt (
-                  inn varchar(10) not null,
+                  inn varchar(12) not null,
                   tax varchar(1000) not null,
                   amount decimal(19,2) not null,
                   primary key (inn, tax),
@@ -36,11 +36,11 @@ public class CompanyDebtRepository {
         }
     }
 
+
     public void upsertCompany(Connection conn, PreparedStatement mergeCompany, String inn) throws SQLException {
         mergeCompany.setString(1, inn);
         mergeCompany.executeUpdate();
     }
-
 
     public void insertCompaniesBatch(Connection conn, PreparedStatement insertCompany, String inn) throws SQLException {
         insertCompany.setString(1, inn);
@@ -53,6 +53,28 @@ public class CompanyDebtRepository {
         insertDebt.setBigDecimal(3, amount);
         insertDebt.addBatch();
     }
+
+
+
+    public void insertCompaniesFromStage(Connection conn) throws SQLException {
+        try (Statement st = conn.createStatement()) {
+            st.executeUpdate("""
+                insert into company(inn)
+                select inn from company_stage
+            """);
+        }
+    }
+
+    public void insertDebtsFromStage(Connection conn) throws SQLException {
+        try (Statement st = conn.createStatement()) {
+            st.executeUpdate("""
+                insert into company_debt(inn, tax, amount)
+                select inn, tax, amount from company_debt_stage
+            """);
+        }
+    }
+
+
 
     public Map<String, CompanyDebtInfo> loadAll(Connection conn) throws SQLException {
         Map<String, CompanyDebtInfo> result = new HashMap<>();
@@ -76,8 +98,6 @@ public class CompanyDebtRepository {
                 if (info != null) info.addDebt(tax, amount);
             }
         }
-
-
 
         return result;
     }

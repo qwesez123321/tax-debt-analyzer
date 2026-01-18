@@ -4,13 +4,18 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import ru.intelinfo.inczilla.mvc.db.DatabaseManager;
 import ru.intelinfo.inczilla.mvc.model.CompanyDebtInfo;
+import ru.intelinfo.inczilla.mvc.model.DebtStatistics;
 import ru.intelinfo.inczilla.mvc.repository.CompanyDebtRepository;
 import ru.intelinfo.inczilla.mvc.repository.DatasetMetaRepository;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.time.LocalDate;
+import java.util.HashMap;
 import java.util.Map;
 
 public class DebtStorageService {
@@ -19,10 +24,6 @@ public class DebtStorageService {
     private final DatabaseManager db;
     private final DatasetMetaRepository metaRepo;
     private final CompanyDebtRepository debtRepo;
-
-    // настройки пачек (чтобы не держать БД долго в блокировке)
-    private final int companyBatchSize = 1000;
-    private final int debtBatchSize = 5000;
 
     public DebtStorageService(DatabaseManager db,
                               DatasetMetaRepository metaRepo,
@@ -37,6 +38,25 @@ public class DebtStorageService {
             try {
                 metaRepo.initSchema(conn);
                 debtRepo.initSchema(conn);
+
+                // staging-таблицы для атомарного обновления
+                try (Statement st = conn.createStatement()) {
+                    st.executeUpdate("""
+                        CREATE TABLE IF NOT EXISTS company_stage (
+                          inn VARCHAR(12) PRIMARY KEY
+                        )
+                        """);
+
+                    st.executeUpdate("""
+                        CREATE TABLE IF NOT EXISTS company_debt_stage (
+                          inn VARCHAR(12) NOT NULL,
+                          tax VARCHAR(1024) NOT NULL,
+                          amount DECIMAL(30,2) NOT NULL,
+                          PRIMARY KEY (inn, tax)
+                        )
+                        """);
+                }
+
                 return null;
             } catch (SQLException e) {
                 throw new RuntimeException(e);
@@ -54,6 +74,13 @@ public class DebtStorageService {
         });
     }
 
+    public boolean isUpdateRequired(LocalDate siteDate) throws SQLException {
+        LocalDate dbDate = getDbDatasetDate();
+        log.info("Дата набора на сайте: {}", siteDate);
+        log.info("Дата набора в БД: {}", dbDate);
+        return dbDate == null || dbDate.isBefore(siteDate);
+    }
+
     public Map<String, CompanyDebtInfo> loadAll() throws SQLException {
         return db.withConnection(conn -> {
             try {
@@ -64,66 +91,47 @@ public class DebtStorageService {
         });
     }
 
-    /**
-     * Обновление данных:
-     * 1) быстро очищаем таблицы (короткая транзакция)
-     * 2) вставляем пачками и коммитим порциями
-     * 3) сохраняем дату набора
-     */
-    public void replaceAll(Map<String, CompanyDebtInfo> companies, LocalDate datasetDate) throws SQLException {
+    public void replaceAllAtomically(Map<String, CompanyDebtInfo> companies, LocalDate datasetDate) throws SQLException {
         try (Connection conn = db.getConnection()) {
-
-            // 1) быстрая очистка
             conn.setAutoCommit(false);
             try {
-                debtRepo.deleteAll(conn);
-                conn.commit();
-            } catch (SQLException ex) {
-                conn.rollback();
-                throw ex;
-            }
 
-            // 2) массовая вставка кусками
-            conn.setAutoCommit(false);
-
-            try (PreparedStatement mergeCompany =
-                         conn.prepareStatement("merge into company(inn) key(inn) values (?)");
-                 PreparedStatement insertDebt =
-                         conn.prepareStatement("merge into company_debt(inn, tax, amount) key(inn, tax) values (?, ?, ?)")) {
-
-                int opCounter = 0;
-                final int commitEvery = 5000; // сколько операций перед коммитом
-
-                for (CompanyDebtInfo info : companies.values()) {
-
-                    // гарантируем, что компания существует в БД до долгов
-                    mergeCompany.setString(1, info.inn);
-                    mergeCompany.executeUpdate();
-                    opCounter++;
-
-                    for (var e : info.debtByTaxType.entrySet()) {
-                        insertDebt.setString(1, info.inn);
-                        insertDebt.setString(2, e.getKey());
-                        insertDebt.setBigDecimal(3, e.getValue());
-                        insertDebt.addBatch();
-                        opCounter++;
-
-                        if (opCounter >= commitEvery) {
-                            insertDebt.executeBatch();
-                            conn.commit();     // порционный коммит
-                            opCounter = 0;
-                        }
-                    }
+                try (Statement st = conn.createStatement()) {
+                    st.executeUpdate("DELETE FROM company_debt_stage");
+                    st.executeUpdate("DELETE FROM company_stage");
                 }
 
-                insertDebt.executeBatch();
+                try (PreparedStatement mergeCompanyStage =
+                             conn.prepareStatement("MERGE INTO company_stage(inn) KEY(inn) VALUES (?)");
+                     PreparedStatement mergeDebtStage =
+                             conn.prepareStatement("MERGE INTO company_debt_stage(inn, tax, amount) KEY(inn, tax) VALUES (?, ?, ?)")) {
 
-                // 3) сохраняем дату набора
+                    for (CompanyDebtInfo info : companies.values()) {
+                        mergeCompanyStage.setString(1, info.inn);
+                        mergeCompanyStage.executeUpdate();
+
+                        for (var e : info.debtByTaxType.entrySet()) {
+                            mergeDebtStage.setString(1, info.inn);
+                            mergeDebtStage.setString(2, e.getKey());
+                            mergeDebtStage.setBigDecimal(3, e.getValue());
+                            mergeDebtStage.addBatch();
+                        }
+                    }
+                    mergeDebtStage.executeBatch();
+                }
+
+
+                debtRepo.deleteAll(conn);
+
+                try (Statement st = conn.createStatement()) {
+                    st.executeUpdate("INSERT INTO company(inn) SELECT inn FROM company_stage");
+                    st.executeUpdate("INSERT INTO company_debt(inn, tax, amount) SELECT inn, tax, amount FROM company_debt_stage");
+                }
+
                 metaRepo.saveDatasetDate(conn, datasetDate);
 
                 conn.commit();
-                log.info("Данные успешно сохранены в БД. Дата набора: {}", datasetDate);
-
+                log.info("Данные успешно сохранены в БД (атомарно). Дата набора: {}", datasetDate);
             } catch (SQLException ex) {
                 conn.rollback();
                 throw ex;
@@ -133,4 +141,32 @@ public class DebtStorageService {
         }
     }
 
+
+    public DebtStatistics calculateStatistics() throws SQLException {
+        Map<String, CompanyDebtInfo> map = loadAll();
+
+        int count = map.size();
+        if (count == 0) {
+            return new DebtStatistics(0, BigDecimal.ZERO, BigDecimal.ZERO, Map.of());
+        }
+
+        BigDecimal maxTotal = BigDecimal.ZERO;
+        BigDecimal sum = BigDecimal.ZERO;
+        Map<String, BigDecimal> maxByTax = new HashMap<>();
+
+        for (CompanyDebtInfo info : map.values()) {
+            sum = sum.add(info.totalDebt);
+
+            if (info.totalDebt.compareTo(maxTotal) > 0) {
+                maxTotal = info.totalDebt;
+            }
+
+            for (var e : info.debtByTaxType.entrySet()) {
+                maxByTax.merge(e.getKey(), e.getValue(), BigDecimal::max);
+            }
+        }
+
+        BigDecimal avg = sum.divide(BigDecimal.valueOf(count), 2, RoundingMode.HALF_UP);
+        return new DebtStatistics(count, maxTotal, avg, maxByTax);
+    }
 }
