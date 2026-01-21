@@ -2,7 +2,6 @@ package ru.intelinfo.inczilla.mvc.repository;
 
 import ru.intelinfo.inczilla.mvc.model.CompanyDebtInfo;
 
-import java.math.BigDecimal;
 import java.sql.*;
 import java.util.HashMap;
 import java.util.Map;
@@ -13,13 +12,13 @@ public class CompanyDebtRepository {
         try (Statement st = conn.createStatement()) {
             st.executeUpdate("""
                 create table if not exists company (
-                  inn varchar(12) primary key
+                  inn varchar(10) primary key
                 )
             """);
 
             st.executeUpdate("""
                 create table if not exists company_debt (
-                  inn varchar(12) not null,
+                  inn varchar(10) not null,
                   tax varchar(1000) not null,
                   amount decimal(19,2) not null,
                   primary key (inn, tax),
@@ -29,52 +28,78 @@ public class CompanyDebtRepository {
         }
     }
 
+    public void initStageSchema(Connection conn) throws SQLException {
+        try (Statement st = conn.createStatement()) {
+            st.executeUpdate("""
+                create table if not exists company_stage (
+                  inn varchar(10) primary key
+                )
+            """);
+
+            st.executeUpdate("""
+                create table if not exists company_debt_stage (
+                  inn varchar(10) not null,
+                  tax varchar(1000) not null,
+                  amount decimal(19,2) not null,
+                  primary key (inn, tax)
+                )
+            """);
+        }
+    }
+
+    public void clearStage(Connection conn) throws SQLException {
+        try (Statement st = conn.createStatement()) {
+            st.executeUpdate("delete from company_debt_stage");
+            st.executeUpdate("delete from company_stage");
+        }
+    }
+
+    public void saveToStage(Connection conn, Map<String, CompanyDebtInfo> companies) throws SQLException {
+        try (PreparedStatement mergeCompany =
+                     conn.prepareStatement("merge into company_stage(inn) key(inn) values (?)");
+             PreparedStatement mergeDebt =
+                     conn.prepareStatement("merge into company_debt_stage(inn, tax, amount) key(inn, tax) values (?, ?, ?)")) {
+
+            int batch = 0;
+            final int batchSize = 5000;
+
+            for (CompanyDebtInfo info : companies.values()) {
+                mergeCompany.setString(1, info.inn);
+                mergeCompany.addBatch();
+
+                for (var e : info.debtByTaxType.entrySet()) {
+                    mergeDebt.setString(1, info.inn);
+                    mergeDebt.setString(2, e.getKey());
+                    mergeDebt.setBigDecimal(3, e.getValue());
+                    mergeDebt.addBatch();
+
+                    if (++batch >= batchSize) {
+                        mergeDebt.executeBatch();
+                        batch = 0;
+                    }
+                }
+            }
+
+            mergeCompany.executeBatch();
+            mergeDebt.executeBatch();
+        }
+    }
+
+    public void replaceMainWithStage(Connection conn) throws SQLException {
+        deleteAll(conn);
+
+        try (Statement st = conn.createStatement()) {
+            st.executeUpdate("insert into company(inn) select inn from company_stage");
+            st.executeUpdate("insert into company_debt(inn, tax, amount) select inn, tax, amount from company_debt_stage");
+        }
+    }
+
     public void deleteAll(Connection conn) throws SQLException {
         try (Statement st = conn.createStatement()) {
             st.executeUpdate("delete from company_debt");
             st.executeUpdate("delete from company");
         }
     }
-
-
-    public void upsertCompany(Connection conn, PreparedStatement mergeCompany, String inn) throws SQLException {
-        mergeCompany.setString(1, inn);
-        mergeCompany.executeUpdate();
-    }
-
-    public void insertCompaniesBatch(Connection conn, PreparedStatement insertCompany, String inn) throws SQLException {
-        insertCompany.setString(1, inn);
-        insertCompany.addBatch();
-    }
-
-    public void insertDebtBatch(Connection conn, PreparedStatement insertDebt, String inn, String tax, BigDecimal amount) throws SQLException {
-        insertDebt.setString(1, inn);
-        insertDebt.setString(2, tax);
-        insertDebt.setBigDecimal(3, amount);
-        insertDebt.addBatch();
-    }
-
-
-
-    public void insertCompaniesFromStage(Connection conn) throws SQLException {
-        try (Statement st = conn.createStatement()) {
-            st.executeUpdate("""
-                insert into company(inn)
-                select inn from company_stage
-            """);
-        }
-    }
-
-    public void insertDebtsFromStage(Connection conn) throws SQLException {
-        try (Statement st = conn.createStatement()) {
-            st.executeUpdate("""
-                insert into company_debt(inn, tax, amount)
-                select inn, tax, amount from company_debt_stage
-            """);
-        }
-    }
-
-
 
     public Map<String, CompanyDebtInfo> loadAll(Connection conn) throws SQLException {
         Map<String, CompanyDebtInfo> result = new HashMap<>();
@@ -92,12 +117,12 @@ public class CompanyDebtRepository {
             while (rs.next()) {
                 String inn = rs.getString(1);
                 String tax = rs.getString(2);
-                BigDecimal amount = rs.getBigDecimal(3);
+                var amount = rs.getBigDecimal(3);
 
                 CompanyDebtInfo info = result.get(inn);
                 if (info != null) info.addDebt(tax, amount);
-            }
-        }
+    }
+}
 
         return result;
     }

@@ -20,9 +20,25 @@ public class DatabaseManager {
         return DriverManager.getConnection(jdbcUrl, user, password);
     }
 
-    public <T> T withConnection(Function<Connection, T> action) throws SQLException {
+    public <T> T withConnection(Function<Connection, T> action) {
         try (Connection conn = getConnection()) {
             return action.apply(conn);
+        } catch (SQLException e) {
+            throw new RuntimeException("DB error", e);
+        }
+    }
+
+
+    @FunctionalInterface
+    public interface SqlFunction<T, R> {
+        R apply(T t) throws SQLException;
+    }
+
+    public <T> T withConnectionSql(SqlFunction<Connection, T> action) {
+        try (Connection conn = getConnection()) {
+            return action.apply(conn);
+        } catch (SQLException e) {
+            throw new RuntimeException("DB error", e);
         }
     }
 }

@@ -54,9 +54,7 @@ public class TaxDebtAnalyzer {
 
             updateService.updateIfRequired(siteDate, () -> {
                 Path zipPath = downloader.downloadArchiveToTemp(archiveUrl);
-                if (zipPath == null) {
-                    throw new IllegalStateException("Ошибка при скачивании архива");
-                }
+                if (zipPath == null) throw new IllegalStateException("Ошибка скачивания архива");
                 Map<String, CompanyDebtInfo> companies = parser.parseArchive(zipPath.toString());
                 return new ParsedArchive(zipPath, companies);
             });
@@ -65,7 +63,7 @@ public class TaxDebtAnalyzer {
             printer.print(stats);
 
         } catch (Exception e) {
-            log.error("Ошибка выполнения программы", e);
+            log.error("Ошибка выполнения", e);
         }
     }
 

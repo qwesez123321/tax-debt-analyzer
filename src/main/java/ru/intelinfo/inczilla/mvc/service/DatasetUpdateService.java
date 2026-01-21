@@ -18,23 +18,20 @@ public class DatasetUpdateService {
     public void updateIfRequired(LocalDate siteDate,
                                  ThrowingSupplier<TaxDebtAnalyzer.ParsedArchive> archiveSupplier) {
         try {
-            storage.ensureSchema();
 
             if (!storage.isUpdateRequired(siteDate)) {
-                log.info("Данные в БД актуальны → обновление не требуется");
+                log.info("Данные актуальны → обновление не требуется");
                 return;
             }
 
-            log.info("Данные в БД отсутствуют или устарели → обновляем");
+            log.info("Данные устарели/отсутствуют → загружаем новый набор (date={})", siteDate);
 
             TaxDebtAnalyzer.ParsedArchive parsed = archiveSupplier.get();
             try {
                 storage.replaceAllAtomically(parsed.companies, siteDate);
-                log.info("Обновление завершено успешно. Дата набора: {}", siteDate);
             } finally {
                 try {
                     Files.deleteIfExists(parsed.zipPath);
-                    log.info("Временный архив удалён: {}", parsed.zipPath);
                 } catch (Exception ex) {
                     log.warn("Не удалось удалить временный архив: {}", parsed.zipPath, ex);
                 }

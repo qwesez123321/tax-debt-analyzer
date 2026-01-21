@@ -12,25 +12,18 @@ import ru.intelinfo.inczilla.mvc.repository.DatasetMetaRepository;
 
 class TaxdebtAnalyzerStart {
 
-    /**
-     * Ручной запуск из IDE.
-     * Отключён по умолчанию, потому что:
-     *  - зависит от сети
-     *  - скачивает большой архив
-     *  - может падать при недоступности ФНС (это нормально для ручного запуска)
-     */
     @Disabled("Manual run (uses network + downloads big dataset)")
     @Test
     void runProgram_manual() {
-        // данные сохраняются между запусками
         String jdbcUrl = "jdbc:h2:file:./data/taxdebt;AUTO_SERVER=TRUE";
-
-
 
         DatabaseManager db = new DatabaseManager(jdbcUrl, "sa", "");
 
         DatasetMetaRepository metaRepo = new DatasetMetaRepository();
         CompanyDebtRepository debtRepo = new CompanyDebtRepository();
+
+        DbSchemaService schemaService = new DbSchemaService(db, metaRepo, debtRepo);
+        schemaService.init();
 
         DebtStorageService storage = new DebtStorageService(db, metaRepo, debtRepo);
         DatasetUpdateService updateService = new DatasetUpdateService(storage);
