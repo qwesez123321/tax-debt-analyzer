@@ -35,20 +35,25 @@ public class DebtStorageService {
 
     public void replaceAllAtomically(Map<String, CompanyDebtInfo> companies, LocalDate datasetDate) {
         try (Connection conn = db.getConnection()) {
+
+            conn.setAutoCommit(true);
+            debtRepo.clearStage(conn);
+            debtRepo.saveToStage(conn, companies);
+
+
             conn.setAutoCommit(false);
             try {
-                debtRepo.clearStage(conn);
-                debtRepo.saveToStage(conn, companies);
                 debtRepo.replaceMainWithStage(conn);
                 metaRepo.saveDatasetDate(conn, datasetDate);
 
                 conn.commit();
             } catch (Exception e) {
                 conn.rollback();
-                throw new RuntimeException("Ошибка атомарного обновления БД", e);
+                throw new RuntimeException("Ошибка атомарного обновления БД (swap/main/meta)", e);
             } finally {
                 conn.setAutoCommit(true);
             }
+
         } catch (SQLException e) {
             throw new RuntimeException("Ошибка доступа к БД", e);
         }

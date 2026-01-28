@@ -54,18 +54,25 @@ public class CompanyDebtRepository {
         }
     }
 
+
     public void saveToStage(Connection conn, Map<String, CompanyDebtInfo> companies) throws SQLException {
         try (PreparedStatement mergeCompany =
                      conn.prepareStatement("merge into company_stage(inn) key(inn) values (?)");
              PreparedStatement mergeDebt =
                      conn.prepareStatement("merge into company_debt_stage(inn, tax, amount) key(inn, tax) values (?, ?, ?)")) {
 
-            int batch = 0;
             final int batchSize = 5000;
+            int companyBatch = 0;
+            int debtBatch = 0;
 
             for (CompanyDebtInfo info : companies.values()) {
+
                 mergeCompany.setString(1, info.inn);
                 mergeCompany.addBatch();
+                if (++companyBatch >= batchSize) {
+                    mergeCompany.executeBatch();
+                    companyBatch = 0;
+                }
 
                 for (var e : info.debtByTaxType.entrySet()) {
                     mergeDebt.setString(1, info.inn);
@@ -73,15 +80,15 @@ public class CompanyDebtRepository {
                     mergeDebt.setBigDecimal(3, e.getValue());
                     mergeDebt.addBatch();
 
-                    if (++batch >= batchSize) {
+                    if (++debtBatch >= batchSize) {
                         mergeDebt.executeBatch();
-                        batch = 0;
+                        debtBatch = 0;
                     }
                 }
             }
 
-            mergeCompany.executeBatch();
-            mergeDebt.executeBatch();
+            if (companyBatch > 0) mergeCompany.executeBatch();
+            if (debtBatch > 0) mergeDebt.executeBatch();
         }
     }
 
@@ -120,9 +127,11 @@ public class CompanyDebtRepository {
                 var amount = rs.getBigDecimal(3);
 
                 CompanyDebtInfo info = result.get(inn);
-                if (info != null) info.addDebt(tax, amount);
-    }
-}
+                if (info != null) {
+                    info.addDebt(tax, amount);
+                }
+            }
+        }
 
         return result;
     }
