@@ -5,13 +5,11 @@ import org.slf4j.LoggerFactory;
 import ru.intelinfo.inczilla.mvc.io.ArchiveDownloader;
 import ru.intelinfo.inczilla.mvc.io.OpenDataArchivePageClient;
 import ru.intelinfo.inczilla.mvc.io.ZipXmlDebtParser;
-import ru.intelinfo.inczilla.mvc.model.CompanyDebtInfo;
 import ru.intelinfo.inczilla.mvc.report.DebtStatisticsPrinter;
 import ru.intelinfo.inczilla.mvc.util.ArchiveDatasetDateExtractor;
 
 import java.nio.file.Path;
 import java.time.LocalDate;
-import java.util.Map;
 
 public class TaxDebtAnalyzer {
     private static final Logger log = LoggerFactory.getLogger(TaxDebtAnalyzer.class);
@@ -55,25 +53,14 @@ public class TaxDebtAnalyzer {
             updateService.updateIfRequired(siteDate, () -> {
                 Path zipPath = downloader.downloadArchiveToTemp(archiveUrl);
                 if (zipPath == null) throw new IllegalStateException("Ошибка скачивания архива");
-                Map<String, CompanyDebtInfo> companies = parser.parseArchive(zipPath.toString());
-                return new ParsedArchive(zipPath, companies);
-            });
+                return zipPath;
+            }, parser);
 
             var stats = calculator.calculate();
             printer.print(stats);
 
         } catch (Exception e) {
             log.error("Ошибка выполнения", e);
-        }
-    }
-
-    public static final class ParsedArchive {
-        public final Path zipPath;
-        public final Map<String, CompanyDebtInfo> companies;
-
-        public ParsedArchive(Path zipPath, Map<String, CompanyDebtInfo> companies) {
-            this.zipPath = zipPath;
-            this.companies = companies;
         }
     }
 }

@@ -11,6 +11,7 @@ import javax.xml.stream.XMLStreamReader;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.FileInputStream;
+import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigDecimal;
@@ -50,6 +51,34 @@ public class ZipXmlDebtParser {
         return result;
     }
 
+
+    @FunctionalInterface
+    public interface DebtRowConsumer {
+        void accept(String inn, String taxName, BigDecimal amount);
+    }
+
+
+    public void parseArchiveStreaming(String zipFilePath, DebtRowConsumer consumer)
+            throws IOException, XMLStreamException {
+
+        log.info("Открываем архив (streaming): {}", zipFilePath);
+
+        try (ZipInputStream zis = new ZipInputStream(new FileInputStream(zipFilePath))) {
+            ZipEntry entry;
+            while ((entry = zis.getNextEntry()) != null) {
+
+                if (!entry.isDirectory() && entry.getName().toLowerCase().endsWith(".xml")) {
+                    log.info("Чтение XML: {}", entry.getName());
+
+                    parseSingleXmlStreaming(zis, consumer);
+                }
+
+                zis.closeEntry();
+            }
+        }
+    }
+
+
     private static class PendingDebt {
         final String tax;
         final BigDecimal amount;
@@ -59,6 +88,18 @@ public class ZipXmlDebtParser {
             this.amount = amount;
         }
     }
+
+    private static final class NonClosingInputStream extends FilterInputStream {
+        private NonClosingInputStream(InputStream in) {
+            super(in);
+        }
+
+        @Override
+        public void close() throws IOException {
+
+        }
+    }
+
 
     private void parseSingleXml(InputStream xmlStream, Map<String, CompanyDebtInfo> map) throws XMLStreamException {
         XMLStreamReader r = XML_INPUT_FACTORY.createXMLStreamReader(xmlStream);
@@ -129,6 +170,87 @@ public class ZipXmlDebtParser {
                     currentInn = null;
                     pendingDebts.clear();
                 }
+            }
+        }
+    }
+
+    private void parseSingleXmlStreaming(InputStream xmlStream, DebtRowConsumer consumer) throws XMLStreamException {
+
+        InputStream safeStream = new NonClosingInputStream(xmlStream);
+
+        XMLStreamReader r = XML_INPUT_FACTORY.createXMLStreamReader(safeStream);
+
+        boolean insideDocument = false;
+        String currentInn = null;
+        List<PendingDebt> pendingDebts = new ArrayList<>();
+
+        try {
+            while (r.hasNext()) {
+                int eventType = r.next();
+
+                if (eventType == XMLStreamConstants.START_ELEMENT) {
+                    String name = r.getLocalName();
+
+                    if ("Документ".equals(name)) {
+                        insideDocument = true;
+                        currentInn = null;
+                        pendingDebts.clear();
+                        continue;
+                    }
+
+                    if (!insideDocument) continue;
+
+                    if ("СведНедоим".equals(name)) {
+                        String tax = attr(r, "НаимНалог");
+                        String sum = attr(r, "ОбщСумНедоим");
+
+                        if (tax == null || sum == null) continue;
+
+                        BigDecimal amount;
+                        try {
+                            amount = parseAmount(sum);
+                        } catch (NumberFormatException ex) {
+                            continue;
+                        }
+
+                        if (currentInn == null) {
+                            pendingDebts.add(new PendingDebt(tax, amount));
+                        } else {
+                            consumer.accept(currentInn, tax, amount);
+                        }
+                        continue;
+                    }
+
+                    if ("СведНП".equals(name)) {
+                        String inn = attr(r, "ИННЮЛ");
+                        if (inn == null || inn.isBlank()) {
+                            currentInn = null;
+                            pendingDebts.clear();
+                            continue;
+                        }
+
+                        currentInn = inn;
+
+                        if (!pendingDebts.isEmpty()) {
+                            for (PendingDebt d : pendingDebts) {
+                                consumer.accept(currentInn, d.tax, d.amount);
+                            }
+                            pendingDebts.clear();
+                        }
+                    }
+
+                } else if (eventType == XMLStreamConstants.END_ELEMENT) {
+                    if ("Документ".equals(r.getLocalName())) {
+                        insideDocument = false;
+                        currentInn = null;
+                        pendingDebts.clear();
+                    }
+                }
+            }
+        } finally {
+            try {
+                r.close();
+            } catch (Exception ignore) {
             }
         }
     }

@@ -2,8 +2,10 @@ package ru.intelinfo.inczilla.mvc.service;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import ru.intelinfo.inczilla.mvc.io.ZipXmlDebtParser;
 
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.LocalDate;
 
 public class DatasetUpdateService {
@@ -16,24 +18,24 @@ public class DatasetUpdateService {
     }
 
     public void updateIfRequired(LocalDate siteDate,
-                                 ThrowingSupplier<TaxDebtAnalyzer.ParsedArchive> archiveSupplier) {
+                                 ThrowingSupplier<Path> zipSupplier,
+                                 ZipXmlDebtParser parser) {
         try {
-
             if (!storage.isUpdateRequired(siteDate)) {
-                log.info("Данные актуальны → обновление не требуется");
+                log.info("Данные актуальны => обновление не требуется");
                 return;
             }
 
-            log.info("Данные устарели/отсутствуют → загружаем новый набор (date={})", siteDate);
+            log.info("Данные устарели/отсутствуют => загружаем новый набор (date={})", siteDate);
 
-            TaxDebtAnalyzer.ParsedArchive parsed = archiveSupplier.get();
+            Path zipPath = zipSupplier.get();
             try {
-                storage.replaceAllAtomically(parsed.companies, siteDate);
+                storage.replaceAllAtomicallyFromZip(zipPath.toString(), siteDate, parser);
             } finally {
                 try {
-                    Files.deleteIfExists(parsed.zipPath);
+                    Files.deleteIfExists(zipPath);
                 } catch (Exception ex) {
-                    log.warn("Не удалось удалить временный архив: {}", parsed.zipPath, ex);
+                    log.warn("Не удалось удалить временный архив: {}", zipPath, ex);
                 }
             }
         } catch (Exception e) {

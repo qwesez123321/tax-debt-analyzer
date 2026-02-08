@@ -1,6 +1,5 @@
 package ru.intelinfo.inczilla.mvc.service;
 
-import ru.intelinfo.inczilla.mvc.model.CompanyDebtInfo;
 import ru.intelinfo.inczilla.mvc.model.DebtStatistics;
 
 import java.math.BigDecimal;
@@ -17,27 +16,24 @@ public class DebtStatisticsCalculator {
     }
 
     public DebtStatistics calculate() {
-        Map<String, CompanyDebtInfo> map = storage.loadAll();
-
-        int count = map.size();
+        int count = storage.countCompanies();
         if (count == 0) {
             return new DebtStatistics(0, BigDecimal.ZERO, BigDecimal.ZERO, Map.of());
         }
 
-        BigDecimal maxTotal = BigDecimal.ZERO;
-        BigDecimal sum = BigDecimal.ZERO;
+        long maxTotalKopeks = storage.maxTotalDebtPerCompanyKopeks();
+        long avgTotalKopeks = storage.avgTotalDebtPerCompanyKopeks();
+        Map<String, Long> maxByTaxKopeks = storage.maxDebtByTaxTypeKopeks();
+
+        BigDecimal maxTotal = BigDecimal.valueOf(maxTotalKopeks).movePointLeft(2).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal avg = BigDecimal.valueOf(avgTotalKopeks).movePointLeft(2).setScale(2, RoundingMode.HALF_UP);
+
         Map<String, BigDecimal> maxByTax = new HashMap<>();
-
-        for (CompanyDebtInfo info : map.values()) {
-            sum = sum.add(info.totalDebt);
-            if (info.totalDebt.compareTo(maxTotal) > 0) maxTotal = info.totalDebt;
-
-            for (var e : info.debtByTaxType.entrySet()) {
-                maxByTax.merge(e.getKey(), e.getValue(), BigDecimal::max);
-            }
+        for (var e : maxByTaxKopeks.entrySet()) {
+            maxByTax.put(e.getKey(),
+                    BigDecimal.valueOf(e.getValue()).movePointLeft(2).setScale(2, RoundingMode.HALF_UP));
         }
 
-        BigDecimal avg = sum.divide(BigDecimal.valueOf(count), 2, RoundingMode.HALF_UP);
         return new DebtStatistics(count, maxTotal, avg, maxByTax);
     }
 }
