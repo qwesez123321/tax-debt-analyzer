@@ -85,6 +85,8 @@ public class DebtStorageService {
 
             debtRepo.replaceMainWithStageAggregated(conn);
 
+            debtRepo.rebuildCompanyTotals(conn);
+
             metaRepo.saveDatasetDate(conn, datasetDate);
 
             conn.commit();
@@ -93,7 +95,6 @@ public class DebtStorageService {
             throw new RuntimeException("Ошибка атомарного обновления БД из ZIP", e);
         }
     }
-
 
     public int countCompanies() {
         return db.withConnectionSql(debtRepo::countCompanies);

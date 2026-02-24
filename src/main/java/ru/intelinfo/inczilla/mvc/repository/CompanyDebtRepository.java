@@ -25,12 +25,19 @@ public class CompanyDebtRepository {
                   foreign key (tax_type_id) references tax_type(id)
                 )
             """);
+
+            // Новая таблица: итог по компании
+            st.executeUpdate("""
+                create table if not exists company_total (
+                  inn bigint primary key,
+                  total_kopeks bigint not null
+                )
+            """);
         }
     }
 
     public void initStageSchema(Connection conn) throws SQLException {
         try (Statement st = conn.createStatement()) {
-            // RAW stage без ключей: максимальная скорость вставки
             st.executeUpdate("""
                 create table if not exists debt_stage_raw (
                   inn bigint not null,
@@ -60,6 +67,20 @@ public class CompanyDebtRepository {
         }
     }
 
+    // Новый метод: пересчёт итогов по компаниям
+    public void rebuildCompanyTotals(Connection conn) throws SQLException {
+        try (Statement st = conn.createStatement()) {
+            st.executeUpdate("truncate table company_total");
+
+            st.executeUpdate("""
+                insert into company_total(inn, total_kopeks)
+                select inn, sum(amount_kopeks)
+                from debt
+                group by inn
+            """);
+        }
+    }
+
     public short getOrCreateTaxTypeId(Connection conn, String taxName) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement("select id from tax_type where name = ?")) {
             ps.setString(1, taxName);
@@ -77,16 +98,15 @@ public class CompanyDebtRepository {
         try (PreparedStatement ps = conn.prepareStatement("select id from tax_type where name = ?")) {
             ps.setString(1, taxName);
             try (ResultSet rs = ps.executeQuery()) {
-                if (!rs.next()) throw new SQLException("tax_type id not found for: " + taxName);
+                if (!rs.next()) throw new SQLException("tax_type id not found");
                 return rs.getShort(1);
             }
         }
     }
 
-    // Статистика SQL
 
     public int countCompanies(Connection conn) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement("select count(distinct inn) from debt");
+        try (PreparedStatement ps = conn.prepareStatement("select count(*) from company_total");
              ResultSet rs = ps.executeQuery()) {
             rs.next();
             return rs.getInt(1);
@@ -94,14 +114,7 @@ public class CompanyDebtRepository {
     }
 
     public long maxTotalDebtPerCompanyKopeks(Connection conn) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement("""
-            select coalesce(max(total), 0)
-            from (
-              select inn, sum(amount_kopeks) as total
-              from debt
-              group by inn
-            ) t
-        """);
+        try (PreparedStatement ps = conn.prepareStatement("select coalesce(max(total_kopeks),0) from company_total");
              ResultSet rs = ps.executeQuery()) {
             rs.next();
             return rs.getLong(1);
@@ -109,14 +122,7 @@ public class CompanyDebtRepository {
     }
 
     public long avgTotalDebtPerCompanyKopeks(Connection conn) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement("""
-            select coalesce(avg(total), 0)
-            from (
-              select inn, sum(amount_kopeks) as total
-              from debt
-              group by inn
-            ) t
-        """);
+        try (PreparedStatement ps = conn.prepareStatement("select coalesce(avg(total_kopeks),0) from company_total");
              ResultSet rs = ps.executeQuery()) {
             rs.next();
             return rs.getLong(1);

@@ -17,6 +17,7 @@ public class DebtStatisticsCalculator {
 
     public DebtStatistics calculate() {
         int count = storage.countCompanies();
+
         if (count == 0) {
             return new DebtStatistics(0, BigDecimal.ZERO, BigDecimal.ZERO, Map.of());
         }
@@ -25,13 +26,20 @@ public class DebtStatisticsCalculator {
         long avgTotalKopeks = storage.avgTotalDebtPerCompanyKopeks();
         Map<String, Long> maxByTaxKopeks = storage.maxDebtByTaxTypeKopeks();
 
-        BigDecimal maxTotal = BigDecimal.valueOf(maxTotalKopeks).movePointLeft(2).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal avg = BigDecimal.valueOf(avgTotalKopeks).movePointLeft(2).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal maxTotal = BigDecimal.valueOf(maxTotalKopeks)
+                .movePointLeft(2)
+                .setScale(2, RoundingMode.HALF_UP);
+
+        BigDecimal avg = BigDecimal.valueOf(avgTotalKopeks)
+                .movePointLeft(2)
+                .setScale(2, RoundingMode.HALF_UP);
 
         Map<String, BigDecimal> maxByTax = new HashMap<>();
         for (var e : maxByTaxKopeks.entrySet()) {
             maxByTax.put(e.getKey(),
-                    BigDecimal.valueOf(e.getValue()).movePointLeft(2).setScale(2, RoundingMode.HALF_UP));
+                    BigDecimal.valueOf(e.getValue())
+                            .movePointLeft(2)
+                            .setScale(2, RoundingMode.HALF_UP));
         }
 
         return new DebtStatistics(count, maxTotal, avg, maxByTax);
